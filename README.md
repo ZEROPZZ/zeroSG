@@ -11,11 +11,11 @@
 ## Usage
 python
 from text_encoder import TextEncoder
-初始化模型
+#初始化模型
 model = TextEncoder()
-准备输入
+#准备输入
 input_tensor = torch.randn(1, 10, 5120)
-前向传播
+#前向传播
 output = model(input_tensor)
 
 
