@@ -1,0 +1,208 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import os
+# 配置类定义
+class Config:
+    def __init__(self):
+        # 模型架构参数
+        self.hidden_size = 768
+        self.num_attention_heads = 12
+        self.num_hidden_layers = 12
+        self.intermediate_size = 3072
+        self.hidden_dropout_prob = 0.1
+        self.attention_probs_dropout_prob = 0.1
+
+        # 图像相关
+        self.image_size = 224
+        self.image_channels = 3
+        self.patch_size = 16
+
+        # 文本相关
+        self.max_position_embeddings = 512
+        self.vocab_size = 30522
+        self.type_vocab_size = 2
+
+        # 语音相关
+        self.audio_sample_rate = 16000
+        self.audio_frame_size = 1024
+        self.audio_hop_size = 512
+
+        # 任务相关
+        self.enable_vqa = True
+        self.enable_caption = True
+        self.enable_retrieval = True
+        self.enable_asr = True  # 语音识别
+        self.enable_realtime_asr = True  # 实时语音识别
+
+        # 训练相关
+        self.batch_size = 32
+        self.learning_rate = 1e-4
+        self.weight_decay = 0.01
+        self.warmup_steps = 10000
+        self.max_steps = 100000
+
+# 模型相关类定义
+class ImageEncoder(nn.Module):
+    def __init__(self, config):
+        super(ImageEncoder, self).__init__()
+        self.config = config
+        self.encoder_layer = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Flatten(),
+            nn.Linear(64 * 111 * 111, config.hidden_size)
+        )
+
+    def forward(self, image):
+        image_features = self.encoder_layer(image)
+        return image_features
+
+class TextEncoder(nn.Module):
+    def __init__(self, config):
+        super(TextEncoder, self).__init__()
+        self.config = config
+        self.transformer_layer = nn.TransformerEncoderLayer(
+            d_model=config.hidden_size, 
+            nhead=config.num_attention_heads,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            self.transformer_layer, 
+            num_layers=config.num_hidden_layers
+        )
+
+    def forward(self, text):
+        text_features = self.transformer_encoder(text).mean(dim=1)
+        return text_features
+
+class AudioEncoder(nn.Module):
+    def __init__(self, config):
+        super(AudioEncoder, self).__init__()
+        self.config = config
+        self.encoder_layer = nn.Sequential(
+            nn.Linear(config.audio_sample_rate, config.hidden_size),
+            nn.ReLU(),
+            nn.Linear(config.hidden_size, config.hidden_size)
+        )
+
+    def forward(self, audio):
+        audio_features = self.encoder_layer(audio)
+        return audio_features
+
+class FusionLayer(nn.Module):
+    def __init__(self, config):
+        super(FusionLayer, self).__init__()
+        self.config = config
+        self.fusion_layer = nn.Linear(config.hidden_size * 3, config.hidden_size)
+
+    def forward(self, image_features, text_features, audio_features):
+        fused_features = torch.cat((image_features, text_features, audio_features), dim=1)
+        fused_features = self.fusion_layer(fused_features)
+        return fused_features
+
+class VQALayer(nn.Module):
+    def __init__(self, config):
+        super(VQALayer, self).__init__()
+        self.config = config
+        self.vqa_layer = nn.Linear(config.hidden_size, config.vocab_size)
+
+    def forward(self, fused_features):
+        vqa_output = self.vqa_layer(fused_features)
+        return vqa_output
+
+class CaptionLayer(nn.Module):
+    def __init__(self, config):
+        super(CaptionLayer, self).__init__()
+        self.config = config
+        self.caption_layer = nn.Linear(config.hidden_size, config.vocab_size)
+
+    def forward(self, fused_features):
+        caption_output = self.caption_layer(fused_features)
+        return caption_output
+
+class RetrievalLayer(nn.Module):
+    def __init__(self, config):
+        super(RetrievalLayer, self).__init__()
+        self.config = config
+        self.retrieval_layer = nn.Linear(config.hidden_size, config.vocab_size)
+
+    def forward(self, fused_features):
+        retrieval_output = self.retrieval_layer(fused_features)
+        return retrieval_output
+
+class ASRLayer(nn.Module):
+    def __init__(self, config):
+        super(ASRLayer, self).__init__()
+        self.config = config
+        self.asr_layer = nn.Linear(config.hidden_size, config.vocab_size)
+
+    def forward(self, fused_features):
+        asr_output = self.asr_layer(fused_features)
+        return asr_output
+
+class RealtimeASRLayer(nn.Module):
+    def __init__(self, config):
+        super(RealtimeASRLayer, self).__init__()
+        self.config = config
+        self.realtime_asr_layer = nn.Linear(config.hidden_size, config.vocab_size)
+
+    def forward(self, fused_features):
+        realtime_asr_output = self.realtime_asr_layer(fused_features)
+        return realtime_asr_output
+
+# 主模型定义
+class AutoModel(nn.Module):
+    def __init__(self, config):
+        super(AutoModel, self).__init__()
+        self.config = config
+        self.image_encoder = ImageEncoder(config)
+        self.text_encoder = TextEncoder(config)
+        self.audio_encoder = AudioEncoder(config)
+        self.fusion_layer = FusionLayer(config)
+        self.vqa_layer = VQALayer(config)
+        self.caption_layer = CaptionLayer(config)
+        self.retrieval_layer = RetrievalLayer(config)
+        self.asr_layer = ASRLayer(config)
+        self.realtime_asr_layer = RealtimeASRLayer(config)
+
+    def forward(self, image, text, audio):
+        image_features = self.image_encoder(image)
+        text_features = self.text_encoder(text)
+        audio_features = self.audio_encoder(audio)
+        fused_features = self.fusion_layer(image_features, text_features, audio_features)
+        vqa_output = self.vqa_layer(fused_features)
+        caption_output = self.caption_layer(fused_features)
+        retrieval_output = self.retrieval_layer(fused_features)
+        asr_output = self.asr_layer(fused_features)
+        realtime_asr_output = self.realtime_asr_layer(fused_features)
+        return vqa_output, caption_output, retrieval_output, asr_output, realtime_asr_output
+
+# 测试代码
+config = Config()
+model = AutoModel(config)
+image = torch.randn(1, 3, 224, 224)
+text = torch.randn(1, config.max_position_embeddings, config.hidden_size)
+audio = torch.randn(1, config.audio_sample_rate)
+vqa_output, caption_output, retrieval_output, asr_output, realtime_asr_output = model(image, text, audio)
+
+# 输出结果
+print("VQA output shape:", vqa_output.shape)
+print("Caption output shape:", caption_output.shape)
+print("Retrieval output shape:", retrieval_output.shape)
+print("ASR output shape:", asr_output.shape)
+print("Realtime ASR output shape:", realtime_asr_output.shape)
+
+# 打印总参数数量
+total_params = sum(p.numel() for p in model.parameters())
+print(f"\n总参数数量: {total_params}")
+
+# 定义保存路径
+save_dir = "./"  # 当前目录
+os.makedirs(save_dir, exist_ok=True)
+save_path = os.path.join(save_dir, "AutoModel.pth")
+
+# 保存模型权重
+torch.save(model.state_dict(), save_path)
+print(f"模型权重已保存到: {save_path}")
